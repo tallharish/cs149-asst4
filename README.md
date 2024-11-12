@@ -171,12 +171,12 @@ def vector_add_tiled(a_vec, b_vec):
     return out
 ```
 
-The above example breaks the vector rows into single-element chunks (the chunk size is 1 element of the vector---yes, this is efficient, we'll come back to this in a second). This is achieved by indexing the vector using the standard Python slicing syntax `Tensor[Index:Index:...]`. More details regarding Tensor indexing in NKI can be found [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/programming_model.html#nki-tensor-indexing). 
+The above example breaks the vector rows into single-element chunks (the chunk size is 1 element of the vector---yes, this is inefficient, we'll come back to this in a second). This is achieved by indexing the vector using the standard Python slicing syntax `Tensor[Index:Index:...]`. More details regarding Tensor indexing in NKI can be found [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/programming_model.html#nki-tensor-indexing). 
 
 In the code above [affine_range](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/api/generated/nki.language.affine_range.html) used here generates a sequence of numbers for loop iterators, similar to Python’s `range` function, but it requires that there are no loop-carried dependencies across iterations. Since there are no loop-carried dependencies across iterations, the NKI compiler can more aggressively optimize loop iterations to allow for increased pipelining across compute engines. In cases where loop iterations have dependencies, [sequential_range](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/api/generated/nki.language.sequential_range.html) should be used instead.
 
 **What you need to do:**
-1. Run the above `vector_add_tiled` implementation where *row_chunk = 1* with a vector size of 25600. You may do so using the following command:
+1. Run the above `vector_add_tiled` implementation where *row_chunk = 1* with a vector size of 25600 (*this may take a couple minutes*). You may do so using the following command:
 
    ```
    python vec_add.py --kernel tiled --size 25600
@@ -446,8 +446,8 @@ def vector_add_direct_allocation(a_vec, b_vec):
     automatically performs for `vector_add_stream`. Having the ability to perform manual allocations does not yield much benefit when performing vector addition as there is no 
     data reuse and no need for engine paralelism. However, in other scenarios you will find that having more fine-grained control of memory allocations allows you to keep data on- 
     chip for as long as possible, as well as giving you the ability to perform different computations in parallel across multiple engines.
-3. How many physical tiles are allocated for each tensor? What is the problem if we set the number of physical tiles too large?
-4. Why should we have different offsets for each tensor? Try to run `vector_add_direct_allocation_bad`. What is the result? Please provide a possible explanation.
+2. How many physical tiles are allocated for each tensor? What is the problem if we set the number of physical tiles too large?
+3. Why should we have different offsets for each tensor? Try to run `vector_add_direct_allocation_bad` on a vector size of 256000. What is the result? Please provide a possible explanation.
 
 ## Part 2: Implementing a Convolution Layer (70 points)
 
