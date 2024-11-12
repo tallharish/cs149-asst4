@@ -26,7 +26,7 @@ Once you have logged in to your AWS machine, you should download the assignment 
 
 After downloading the Assignment 4 repository, move to the `asst4-trainium` directory and **run the install script we have provided**:
 ```
-cd asst4
+cd asst4-trainium
 source install.sh
 ```
 The install script will activate a Python [virtual environment](https://builtin.com/data-science/python-virtual-environment) with all the needed assignment dependencies. It will also modify your `~/.bashrc` file so the virtual environment is activated upon future logins to your machine. Finally, the script sets up your InfluxDB credentials so that you may use `neuron-profile`.
