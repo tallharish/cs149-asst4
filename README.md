@@ -40,7 +40,7 @@ First, let's get you acquainted with Trainium.
 The `Trn1.2xlarge` instance used in this assignment features a single Trainium device, which comprises of two NeuronCores, as shown in image below. Each core is equipped with its own dedicated HBM (High-bandwidth memory). Each NeuronCore can be considered a standalone processing unit, which contains its own on-chip storage as well as a collection of specialized compute engines for performing 128x128 matrix operations (tensor engine), 128-wide vector operations (vector engine), etc. While each Trainium device has two NeuronCores, in this assignment we will be writing kernels that execute on a single NeuronCore.
 
 <p align="center">
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/trainium_chip.png" width=40% height=40%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/trainium_chip.png" width=40% height=40%>
 </p>
 
 More details on the four distinct compute engines that exist in a NeuronCore can be found [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/arch/neuron-hardware/neuron-core-v2.html#neuroncores-v2-arch).
@@ -50,7 +50,7 @@ More details on the four distinct compute engines that exist in a NeuronCore can
 In Assignment 3, one of the key concepts was learning about the GPU memory hierarchy presented by CUDA, where there was main host memory, GPU device global memory, per-thread block shared memory, and private per-CUDA-thread memory.  On Trainium, the memory hierarchy consists of four levels: **host memory (DRAM)**, **device memory (HBM)**, and two fast on-chip memory types, **SBUF (State Buffer)** and **PSUM (Partial Sum Buffer)**. These levels are shown in the figure below.
 
 <p align="center">
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/memory_hierarchy.png" width=80% height=80%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/memory_hierarchy.png" width=80% height=80%>
 </p>
 
 * __Host memory__, is the memory address space of the host machine, and is external to the Trainium device. You can think of host memory on Trainium as similar to host memory in a CUDA programming environment.
@@ -61,7 +61,7 @@ In Assignment 3, one of the key concepts was learning about the GPU memory hiera
 In Trainium, all computations require loading data from HBM into SBUF, which is accessible by all engine types. Intermediate data generated during kernel execution by the compute engines is also stored in SBUF. Once the computation is complete, the results are written back to HBM. 
 
 <p align="center">
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/neuron_core.png" width=40% height=40%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/neuron_core.png" width=40% height=40%>
 </p>
 
 Recall that in a system that features a traditional data cache, decisions about what data from off-chip memories is replicated and stored in on-chip storage are made by the cache (based on cache organization and eviction policies). Software loads data at a given memory address, and the hardware is responsible for fetching that data from memory and managing what data is stored in the cache for efficient future access. In other words, from the perspective of software correctness, the cache does not exist--it is a hardware implementation detail. 
@@ -125,7 +125,7 @@ In the code above...
 - `nl.store` stores the results back to HBM.
 
 <p align="center">
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/sbuf_layout.png" width=60% height=60%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/sbuf_layout.png" width=60% height=60%>
 </p>
 
 **When looking at the code above, notice that NKI operations operate on tensors, not scalar values.** Specifically, the on-chip memories, SBUF and PSUM, store data that is arranged as 2D memory arrays. The first dimension of the 2D array is called the "partition dimension" `P`. The second dimension is referred to as the "free dimension" `F`.  NeuronCores are able load and process data along the partition dimension in parallel, *but the architecture also places a restriction that the size of the partition dimension is 128 or smaller.*  In other words, 
@@ -201,8 +201,8 @@ Although the first dimension (partition dimension) of a SBUF tensor can be no gr
 In order to improve DMA transfer overhead, we will need to reshape our vectors so they are two-dimensional tiles, rather than linearized arrays. In Assignment 3, we worked with CUDA thread blocks partitioned across an entire image, and in order to map CUDA threads to image pixels we flattened our grid by calculating a thread’s global linear index. You can think about the reshaping process for the NeuronCore as the inverse: the goal is to turn a single-dimension vector into a dense 2D matrix. NumPy comes with a built-in [reshape function](https://numpy.org/doc/stable/reference/generated/numpy.reshape.html) allowing you to reshape arrays into the shape of your choosing. 
 
 <p align="center">
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/non_reshaped_DMA.png" width=48% height=48%>
-  <img src="https://github.com/stanford-cs149/asst4-test/blob/main/handout/reshaped_DMA.png" width=48% height=48%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/non_reshaped_DMA.png" width=48% height=48%>
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/reshaped_DMA.png" width=48% height=48%>
 </p>
 
 
@@ -267,11 +267,11 @@ There is a trade-off in choosing a tile's free dimension size:
 
 Currently, we have explored the benefits of increasing tile sizes to their maximum amount in order for us to amortize instruction overhead and DMA transfer setup / teardown. Now, we will explore why making the free dimension as large as possible is not always the best solution.
 
-For this task, you will need to use the profiling tool for NeuronDevices: `neuron-profile`, which can provide detailed analysis of the performance of an application running on a NeuronCore. In order to run the profiling tool, you must make sure that you ran the install script as detailed in [Environment Setup](https://github.com/stanford-cs149/asst4-test/tree/main?tab=readme-ov-file#environment-setup) and that you forwarded ports 3001 and 8086 when you ssh'd into your machine. To reiterate on the latter, the command you should have ran is:
+For this task, you will need to use the profiling tool for NeuronDevices: `neuron-profile`, which can provide detailed analysis of the performance of an application running on a NeuronCore. In order to run the profiling tool, you must make sure that you ran the install script as detailed in [Environment Setup](https://github.com/stanford-cs149/asst4-trainium/tree/main?tab=readme-ov-file#environment-setup) and that you forwarded ports 3001 and 8086 when you ssh'd into your machine. To reiterate on the latter, the command you should have ran is:
 
  `ssh -i path/to/key_name.pem ubuntu@<public_dns_name> -L 3001:localhost:3001 -L 8086:localhost:8086`
  
- More details about why this is needed can be found in the [cloud_readme.md](https://github.com/stanford-cs149/asst4-test/blob/main/cloud_readme.md).
+ More details about why this is needed can be found in the [cloud_readme.md](https://github.com/stanford-cs149/asst4-trainium/blob/main/cloud_readme.md).
 
 **What you need to do:**
 1.  This time, we are going to increase the vector sizes by a factor of 10 so that instead of adding 25600 elements we will be adding 256000 elements. This will allow us to see trade offs that comes from dealing with tile sizes that are too large.  
@@ -322,7 +322,7 @@ For this task, you will need to use the profiling tool for NeuronDevices: `neuro
    Paste this *http* link into a browser of your choice to view more in-depth profiler analytics. **Note:** You will only be able to view this if you have correctly forwarded 
    ports 3001 and 8086 when you ssh'd into your machine.
 
-   ![Profiler GUI Example](https://github.com/stanford-cs149/asst4-test/blob/main/handout/profiler_GUI.gif)
+   ![Profiler GUI Example](https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/profiler_GUI.gif)
 
    Hover over various events in the graph generated from the profiler. See the above GIF as an example for `vector_add_stream` with *FREE_DIM = 2000* on a vector size of 256000. 
    In the example we see the following:
