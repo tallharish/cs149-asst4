@@ -1,6 +1,6 @@
 # Assignment 4: Programming a Machine Learning Accelerator #
 
-**Due Tues Dec 3, 11:59pm**
+**Due Thurs Dec 5, 11:59pm**
 
 **100 points total**
 
