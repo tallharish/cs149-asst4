@@ -352,7 +352,7 @@ To introduce NKI allocation API, let’s define the block (`B`) dimension as any
 
 In fact, the block dimensions are considered **logical** in NKI - the number of `(P, F)` NKI Tiles suggested by dimension (`B`) may not match the number of physical tiles allocated. The Neuron Compiler analyzes the code and uses a heuristic-driven allocator to determine the number of physical tiles allocated to each tensor. Given the amount of parallelism available in hardware and the complex parallel programs seen in common machine learning workloads, the heuristic-based memory allocator in Neuron Compiler may not yield the optimal allocation decisions. Bad allocation decisions typically lead to sub-optimal engine parallelism and/or on-chip memory over-subscription causing excessive spills of intermediate data to device memory. 
 
-For example, consider a scenario where the partition dimension size of `nki_tensor` is 2, yet only a single physical tile, `T`, is allocated in `sbuf`.
+For example, consider a scenario where the block dimension size of `nki_tensor` is 2, yet only a single physical tile, `T`, is allocated in `sbuf`.
 ```
    i_block = 0
 1. nl.load(nki_tensor[0, :, :]) => write T
