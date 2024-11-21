@@ -449,15 +449,244 @@ def vector_add_direct_allocation(a_vec, b_vec):
 2. How many physical tiles are allocated for each tensor? What is the problem if we set the number of physical tiles too large?
 3. Why should we have different offsets for each tensor? Try to run `vector_add_direct_allocation_bad` on a vector size of 256000. What is the result? Please provide a possible explanation.
 
-## Part 2: Implementing a Convolution Layer (70 points)
+## Part 2: Implementing a Fused Convolution - Max Pool Layer (70 points)
 
-In the second part of the assignment you will implement a convolution layer on the NeuronCore. Part two of the assignment will be released after the midterm.
+Now that you’ve learned how to efficiently move data on a NeuronCore, it is time to program an actual Trainium kernel yourself. In this section, your task is to implement a kernel that performs both consolution and an operation called "max pooling" As we discussed in class, these two operations are a fundamental component of modern Convolutional Neural Networks (CNNs), which are extensively used for computer vision tasks. An important detail is that your implementation of these two operations will be "fused", mean you will implement the computation on Trainium without dumping intermediate values to off-chip HBM. 
+
+### Matrix Operations on a NeuronCore
+
+Before you begin, we will demonstrate how to perform matrix operations on a NeuronCore. As discussed earlier, a NeuronCore is equipped with various compute engines, each optimized for specific types of arithmetic operations. In Part 1, you worked with the Vector Engine, which specializes in vector operations like vector addition. However in Part 2, you not only need to perform vector operations, but you will also need to perform matrix operations. The Tensor Engine on Trainium is specifically designed to accelerate these matrix operations, such as matrix multiplication and matrix transpose. 
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/tensor_engine.png" width=60% height=60%>
+</p>
+
+The above image depicts the architecture of the Tensor Engine. The Tensor Engine is built around a 128x128 [systolic processing array](https://gfxcourses.stanford.edu/cs149/fall24/lecture/hwprog/slide_10) which streams matrix data input from SBUF (on-chip storage) and writes the output to PSUM (also on-chip storage). Like SBUF, PSUM is fast on-chip memory, however it is much smaller than SBUF (2MiB vs 24 MiB) and serves a dedicated purpose of storing matrix multiplication results computed by the Tensor Engine. The Tensor Engine is able to read-add-write to every address in PSUM. Therefore, PSUM is useful when executing large matrix multiplications in a tiled manner, where the results of each matrix multiply are accumulated into the same output tile. 
+
+Recall that the Vector Engine has the capability to operate on SBUF tiles of size (128, 64k). However, the Tensor Engine contains unique SBUF tile size constraints which differ to that of the Vector Engine. Suppose we want the Tensor Engine to perform the matrix multiplication C = A x B, where A and B are located in SBUF, and the result C is stored in PSUM. Trainium imposes the following constraints. 
+  - Matrix A - the left-hand side tile - can be no bigger than (128, 128)
+  - Matrix B - the right-hand side tile - can be no bigger than (128, 512).
+  - The output tile C in PSUM is restricted to a size of (128, 512).
+
+### An NKI Matrix Multiplication Kernel
+
+Given the constraints of the Tensor Engine, implementing matrix multiplication for arbitrary matrix dimensions on Trainium requires tiling the computation so it is performed as a sequence of matrix multiplications on fixed-size tiles. (This is similar to how vector addition in part 1 was tiled to work for large input vector sizes). The example below, which we copied from the [NKI tutorials](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/tutorials.html), demonstrates how to implement matrix multiplication using a tiled approach, where the tiles are sized to meet the Trainium Tensor engines tile size constraints. Note: a description of the code is provided after the code listing.
+
+```
+def nki_matmul_tiled_(lhsT, rhs, result):
+  """NKI kernel to compute a matrix multiplication operation in a tiled manner"""
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+
+  # Maximum free dimension of the stationary operand of general matrix multiplication on tensor engine
+  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
+
+  # Maximum partition dimension of a tile
+  TILE_K = nl.tile_size.pmax  # 128
+
+  # Maximum free dimension of the moving operand of general matrix multiplication on tensor engine
+  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
+
+  # Use affine_range to loop over tiles
+  for m in nl.affine_range(M // TILE_M):
+    for n in nl.affine_range(N // TILE_N):
+      # Allocate a tensor in PSUM
+      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
+
+      for k in nl.affine_range(K // TILE_K):
+        # Declare the tiles on SBUF
+        lhsT_tile = nl.ndarray((TILE_K, TILE_M), dtype=lhsT.dtype, buffer=nl.sbuf)
+        rhs_tile = nl.ndarray((TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
+
+        # Load tiles from lhsT and rhs
+        lhsT_tile[...] = nl.load(lhsT[k * TILE_K:(k + 1) * TILE_K,
+                                      m * TILE_M:(m + 1) * TILE_M])
+        rhs_tile[...] = nl.load(rhs[k * TILE_K:(k + 1) * TILE_K,
+                                    n * TILE_N:(n + 1) * TILE_N])
+
+        # Accumulate partial-sums into PSUM
+        res_psum += nl.matmul(lhsT_tile[...], rhs_tile[...], transpose_x=True)
+
+      # Copy the result from PSUM back to SBUF, and cast to expected output data-type
+      res_sb = nl.copy(res_psum, dtype=result.dtype)
+      nl.store(result[m * TILE_M:(m + 1) * TILE_M, n * TILE_N:(n + 1) * TILE_N],
+               value=res_sb)
+```
+
+Let's break down the components of the kernel which computes the matrix multiply: `result = lst x rhs`.
+
+  - Input Tensors:
+      - `lhsT` is the left-hand-side matrix. But the matrix is provided in a __transposed format__ with shape `[K,M]`, where both `K` and `M` are multiples of 128.
+      - `rhs` is the right-hand-side matrix, with shape `[K,N]`, where `K` is a multiple of 128, and `N` is a multiple of 512.
+      - `result` is the output matrix of shape `[M,N]`
+      - In matrix multiplication, the **contraction dimension** refers to the column dimension of the left-hand matrix and the row dimension of the right-hand matrix. For example, say 
+        we have the following matrix multiplication: `A x B = C`. The matrix `A` has shape  
+        `[M, N]` and the matrix `B` has shape `[N, M]`. The shape of `C` is then `[M, M]`. 
+        Thus, the dimensions that were eliminated was the column dimension of `A` and the row dimension of `B`. Please note that in the `nki_matmul_tiled_` example above, the 
+        matrix is in transposed form and is transposed again in the `nl.matmul` call. Thus, the matrix multiplication which is being performed is  
+        `A^T x B = C`. In the transposed case, the 
+        contraction dimension is the row dimension of `A` and the row dimension of `B` due to the fact that `A` is transposed before multiplication.
+  - Tile Dimensions:
+      - The tile sizes are set based on the constraints of the tensor engine matrix multiplication operation, as described [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/api/generated/nki.isa.nc_matmul.html).
+        - `TILE_M`: 128 — Tile size for the `M` dimension.
+        - `TILE_K`: 128 — Tile size for the `K` dimension.
+        - `TILE_N`: 512 — Tile size for the `N` dimension.
+  - Looping Over Tiles:
+      - The kernel uses `affine_range` loops to iterate over tiles along the `M` and `N` dimensions of the `result` matrix.
+      - For each output tile of shape `(TILE_M, TILE_N)`, it allocates a temporary partial sum tensor `res_psum` in PSUM memory.
+  - Loading Tiles:
+      - For each output tile, tiles of `lhsT` and `rhs` are loaded into the on-chip SBUF memory for efficient access.
+      - `lhsT_tile` is loaded with a slice of shape `[TILE_K, TILE_M]`, and `rhs_tile` is loaded with a slice of shape `[TILE_K, TILE_N]`.
+  - Matrix Multiplication:
+      - A partial matrix multiplication is performed using the loaded tiles and partial results are accumulated into `res_psum`.
+  - Storing Results:
+      - Once the tiles for a given result block are fully computed, the partial sums in `res_psum` are copied to SBUF and cast to the required data type.
+      - The final result is stored back into the `result` tensor at the corresponding position.
+
+In summary, this tiled implementation handles large matrix dimensions by breaking them into hardware-compatible tile sizes. It leverages specialized memory buffers (i.e., PSUM) to minimize memory latency and optimize matrix multiplication performance. You can read more about NKI matrix multiplication [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/tutorials/matrix_multiplication.html).
+
+### Convolution Layer Overview
+
+Let’s now turn our focus to the convolution layer. Recall the [convolution operation](https://gfxcourses.stanford.edu/cs149/fall24content/media/dnneval/10_dnneval.pdf) discussed in class. It involves sliding a filter across an __input feature map__, where at each position the filter interacts with the overlapping input region. In each overlapping region, element-wise multiplications are performed between the filter weights and the input region region values. The results of these element-wise multiplications are then added together, producing a single value for the corresponding position in the output feature map. This process captures local spatial patterns and relationships among neighboring features.
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/convolution.png" width=55% height=55%>
+</p>
+
+The input feature map often consists of multiple channels. For example, an image usually contains three RGB channels (red, green, and blue). In this case, instead of only computing a weighted sum over the 2D spatial region, the convolution computes the weighted sum of both the 2D spatial region and channel depth. The image below depicts an example of a convolution layer being performed on a 32x32 input image with three RGB channels. In the image, a 5x5x3 filter is applied on the 32x32x3 image to produce a 28x28x1 output feature map.
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/cs231n_convolution.png" width=55% height=55%>
+  <br>
+  <em>Source: CS231N https://cs231n.stanford.edu/slides/2024/lecture_5.pdf </em>
+</p>
+
+__As seen in the image, each filter produces a single channel of output.__ To generate multiple output channels, multiple filters are applied to the input featuer map. In addition to this, each convolution filter also contains a scalar bias value that is to be added to each weighted sum. 
+
+The input and output of the convolution operator can be summarized as follows (ignoring bias for now):
+
+<p align="left">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/conv2d_summary.png" width=50% height=50%>
+</p>
+
+Additionally, a [convolution layer](https://pytorch.org/docs/stable/generated/torch.nn.functional.conv2d.html) can take in additional hyper-parameters such as padding and stride in addition to an input feature map, filter weights, and scalar bias. However, we have *simplified the constraints of your convolution* to make implementation easier for you. You need **only to support a stride of 1**, and you do **not have to worry about padding** as we will pad the input feature map for you before it is passed into your kernel.
+
+### Mapping Convolution to Matrix Multiplication
+
+Now, our objective is to map the convolution operator onto thee high-performance matrix operations supported by the Trainium's Tensor engine.  To do this, we can compare the mathematical formulation of convolution with matrix multiplication.
+
+**Conv2D:**
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/conv2d_formula.png" width=65% height=65%>
+</p>
+
+**Matrix Multiplication:**
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/matmul_formula.png" width=25% height=25%>
+</p>
+
+In class we discussed one way to convert convolution with many filters into a single large matrix multiplication.  We'll do the same thing here, but take a different approach that yields an efficient implementation on Trainium.  In this approach the convolution operation is formulated as a series of dependent matrix multiplications. A visual illustration of this formulation is shown below.
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/conv2d_matmul_diagram.png" width=100% height=100%>
+</p>
+
+In this approach, the height and width dimensions of the input feature map are flattened into a single dimension, reshaping the input to `(Height × Width) × Input Channels​`. This reshaped input is then multiplied by each position of the filters, where `i` and `j` respectively range from `0` to `Filter Height - 1` and from `0` to `Filter Width - 1`. Each filter slice has a shape of `Input Channels × Output Channels`, and the resulting matrix multiplication contracts along the `Input Channels` dimension. To align the input with each filter slice, the input must be shifted by an offset corresponding to the filter’s current position `(i, j)`. The results of these matrix multiplications are accumulated to produce the output tensor.
+
+Below is the pseudocode for the described algorithm:
+```
+# Reshape input and weight to align for matrix multiplication
+input =  input.reshape(Height * Width, Input_Channels)
+weight = weight.reshape(Filter_Height, Filter_Width, Input_Channels, Output_Channels)
+
+# Initialize Output with zeros
+output = zeros([Height * Width, Output_Channels])
+
+# Iterate over the filter height
+for i in range(Filter_Height):
+    # Iterate over the filter width
+    for j in range(Filter_Width):
+
+        # Shift the Input tensor by (i, j) to align with the filter's current position
+        input_shifted = shift(input, (i, j))
+
+        # Perform matrix multiplication between the input and the weights from the filter slice
+        output += matmul(input_shifted, weight[i, j, :, :])
+```
+
+### Max Pool Layer Overview
+Max pooling layers are commonly used in CNNs between successive convolutional layers to reduce the size of the feature maps. Not only does this prevent excessively large feature maps which can pose a problem for computational resources, but it also reduces the amount of parameters in the CNN which effectively reduces model overfitting.
+
+A max pooling layer operates similarly to a convolution layer in that it slides a filter spatially over an input feature map. However, instead of computing a weighted sum for each overlapping region, the max pooling layer selects the maximum value from each region and stores it in the output feature map. This operation is applied independently to each channel of the feature map, thus the number of channels remains unchanged. For instance, consider a 4x4 input image with three RGB channels passing through a max pooling layer with a 2x2 filter. The resulting output is a 2x2 image with three RGB channels, showing that the spatial dimensions are reduced by a factor of 2 while the number of channels remains the same.
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/maxpool.png" width=37% height=37%>
+</p>
+
+As shown above, a [max pool layer](https://pytorch.org/docs/stable/generated/torch.nn.functional.max_pool2d.html#torch.nn.functional.max_pool2d) typically has separate stride and filter size hyperparameters. Similar to the convolution layer, we have simplified the constraints for the max pooling layer you are required to implement. Instead of defining both parameters, your kernel will use a single parameter, `pool_size`, which corresponds to both the filter size and the stride. The `pool_size` can only be set to either 1 or 2. When `pool_size` is 2, the max pooling operation behaves as shown in the image above. When `pool_size` is 1, the max pooling layer functions as a no-op, producing an output identical to the input. While a `pool_size` of 1 might seem pointless, it actually offers added flexibility for your fused layer, as you will soon see. 
+
+### Fusing Convolution and Max Pool
+You will implement an NKI kernel that combines the Convolution and Max Pool layers into a single, fused operation. Below, we will outline the detailed specifications and requirements for your fused layer.
+
+<p align="center">
+  <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/fused_kernel.png" width=95% height=95%>
+</p>
+
+The diagram above illustrates the calculations your fused kernel would perform on a 6x6 input with a single input channel. The fused kernel performs a standard convolution with one filter and stride of 1. The fused kernel then performs a max pool on the convolution result using a 2x2 pooling filter.
+
+Your fused kernel takes in the following parameters:
+  - `X` - A batch of input images. `X` has shape `(Batch Size, Input Channels, Input Height, Input Width)`. You are guaranteed that `Input Channels` will be a multiple of 128.
+  - `W` - The convolution filter weights. `W` has shape `(Output Channels, Input Channels, Filter Height, Filter Width)`. You are guaranteed that `Filter Height == Filter Width`. You are also guaranteed that `Output Channels` is a multiple of 128.
+  - `bias` - The convolution filter biases. `bias` has shape `(Output Channels)`
+  - `pool_size` - The size of the max pooling filter and pooling stride. You are guaranteed that the size of the input, the size of the filter, and the `pool_size` would be such that everything is nicely divisible. More concretely, `(Input Height - Filter Height + 1) % Pool Size == 0`.  Notice that if the value of `pool_size` is `1`, then the fused kernel operates as a normal convolution kernel. This gives us the flexibility to choose whether we want max pooling or not.
+
+Feel free to use the [course slides](https://gfxcourses.stanford.edu/cs149/fall24/lecture/dnneval/slide_43) on a convolution layer implementation as a starting point. If you are referencing the course slides, `INPUT_DEPTH` is synonymous with `Input Channels` and `LAYER_NUM_FILTERS` is synonymous with `Output Channels` in our naming scheme. Note that the input parameters to your fused kernel have different shapes than depicted in the convolution course slides. You are free to reshape the inputs into whatever shapes you desire by using the [NumPy reshape method](https://numpy.org/doc/stable/reference/generated/numpy.reshape.html) just as was done in `vector_add_stream kernel` from Part 1. We have also given you the NumPy implementations of a convolution layer and a maxpool layer in `part2/conv2d_numpy.py`. The NumPy implementations should give you a general outline of the programming logic for each layer. It might be a good exercise to think about how you would be able to fuse the NumPy implementations into a single layer, which is what you will do in your kernel.
+
+### What You Need To Do
+For this part of the assignment, focus exclusively on the file `part2/conv2d.py`. We've provided basic starter code; your task is to complete the implementation of the (fused) Conv2D kernel within the function `fused_conv2d_maxpool`.
+
+Prioritize Correctness First. Before optimizing for performance, ensure your implementation is correct. While you may choose to implement things differently, we recommend starting by creating a kernel that works for small image sizes. Then, once your kernel works for small images, extend its functionality to handle images that are too large to fit entirely in the SBUF buffer. Following that, incorporate bias addition. Proceed to optimize performance once you achieve correctness. The test harness is written such that you can optimize your conv2D implementation without having to fuse a maxpool operation with it. Thus, you may choose to fuse a max pool operation with the conv2d kernel after you have an implementation which is correct and meets the performance requirements.
+
+Use the test harness script provided to validate your implementation. To run the tests, navigate to the `part2/` directory and execute:
+```
+python3 test_harness.py
+```
+
+To check the correctness and performance of your implementation of Conv2D kernel with a fused maxpool, invoke the test harness with the `--test_maxpool` flag. To debug your implementations, run the test harness with the `--simulate` flag. This wraps your implementation with a call to `nki.simulate_kernel()`: you can read more about it [here](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/api/generated/nki.simulate_kernel.html#nki.simulate_kernel). When running in simulation mode, you can insert calls to `nki.device_print()` to print intermediate values of the device tensors. This can help identify potential bugs.
+
+The test harness will run correctness tests first, and run performance checks next. A full-credit solution must achieve performance within 150% of the reference kernel while maintaining correctness. It will invoke your kernel with input tensors having data types float32 and float16: with the performance requirements for float16 being more strict. Make sure you write your kernels keeping this in mind!
+
+Students also need to submit a write up briefly describing their implementations. Also describe how you went about optimizing your implementation. Make sure to profile your implementation, and report the achieved MFU, with both `bfloat16` and `float32` data types. You can so by running `neuron-profile view`. Run the test harness with the `--profile <profile_name>` flag to capture a trace.
+
+## Grading Guidelines
+
+For the correctness test, we use two types of images. The first type is a small image with dimensions of 32×16. The second type is a large image with dimensions of 224×224, which exceeds the capacity of the SBUF and cannot fit within it.
+
+For the performance test, we evaluate the performance under different configurations: with and without maxpool, and using float16 versus float32 precision. We will compare the performance of your program with the reference solution. You will pass the test if your p99 latency is within 150% of the reference latency.
+
+**Write Up: 40 Points**
+  - Part 1 Questions: 30 Points
+  - Part 2 Questions: 10 Points
+
+**Correctness of Fused Convolution - MaxPool Kernel: 10 Points**
+  - With Small Images: 2.5 points
+  - With Large Images: 2.5 points
+  - With Bias Addition: 2.5 points
+  - With Max Pool: 2.5 points
+
+**Performance of Fused Convolution - MaxPool Kernel on Large Images: 50 Points**
+  - Without Max Pool (Float 16): 17.5 points
+  - Without Max Pool (Float 32): 17.5 points
+  - With Max Pool (Float 16): 7.5 points
+  - With Max Pool (Float 32): 7.5 points
 
 ## Hand-in Instructions
 
 Please submit your work using Gradescope. If you are working with a partner please remember to tag your partner on gradescope.
 
-Please submit your writeup as the file `writeup.pdf`.
-
-Details on final code submission to follow.
-
+1. **Please submit your writeup as the file `writeup.pdf`.**
+2. **Please submit `conv2d.py` from part 2.**
