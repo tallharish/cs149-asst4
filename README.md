@@ -589,7 +589,7 @@ Now, our objective is to map the convolution operator onto thee high-performance
   <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/matmul_formula.png" width=25% height=25%>
 </p>
 
-In class we discussed one way to convert convolution with many filters into a single large matrix multiplication.  We'll do the same thing here, but take a different approach that yields an efficient implementation on Trainium.  In this approach the convolution operation is formulated as a series of dependent matrix multiplications. A visual illustration of this formulation is shown below.
+In class we discussed one way to convert convolution with many filters into a single large matrix multiplication.  We'll do the same thing here, but take a different approach that yields an efficient implementation on Trainium.  In this approach the convolution operation is formulated as a series of independent matrix multiplications. A visual illustration of this formulation is shown below.
 
 <p align="center">
   <img src="https://github.com/stanford-cs149/asst4-trainium/blob/main/handout/conv2d_matmul_diagram.png" width=100% height=100%>
