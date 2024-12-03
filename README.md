@@ -599,12 +599,10 @@ In this approach, the height and width dimensions of the input feature map are f
 
 Below is the pseudocode for the described algorithm:
 ```
-# Reshape input and weight to align for matrix multiplication
-input =  input.reshape(Height * Width, Input_Channels)
-weight = weight.reshape(Filter_Height, Filter_Width, Input_Channels, Output_Channels)
-
-# Initialize Output with zeros
-output = zeros([Height * Width, Output_Channels])
+- Have the input image with shape (Input Channels, Image Height * Image Width)
+- Have the filter weights with shape (Filter Height, Filter Weight, Input Channels, Output Channels)
+- Initialize the output to appropriate shape of (Output Channels, Output Height * Output Width)
+output = zeros([H * W, Output_Channels])
 
 # Iterate over the filter height
 for i in range(Filter_Height):
@@ -614,9 +612,11 @@ for i in range(Filter_Height):
         # Shift the Input tensor by (i, j) to align with the filter's current position
         input_shifted = shift(input, (i, j))
 
-        # Perform matrix multiplication between the input and the weights from the filter slice
-        output += matmul(input_shifted, weight[i, j, :, :])
+        # Perform matrix multiplication between the input and the filter slice
+        output += matmul(weight[i,j,:,:], transpose(input_shifted)))
 ```
+
+> Do note that this just an algorithmic description, and the purpose of this assignment is for you to figure out to map this algorithmic description to an efficient implementation on this hardware!
 
 ### Max Pool Layer Overview
 Max pooling layers are commonly used in CNNs between successive convolutional layers to reduce the size of the feature maps. Not only does this prevent excessively large feature maps which can pose a problem for computational resources, but it also reduces the amount of parameters in the CNN which effectively reduces model overfitting.
