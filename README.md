@@ -640,7 +640,7 @@ The diagram above illustrates the calculations your fused kernel would perform o
 
 Your fused kernel takes in the following parameters:
   - `X` - A batch of input images. `X` has shape `(Batch Size, Input Channels, Input Height, Input Width)`. You are guaranteed that `Input Channels` will be a multiple of 128.
-  - `W` - The convolution filter weights. `W` has shape `(Output Channels, Input Channels, Filter Height, Filter Width)`. You are guaranteed that `Filter Height == Filter Width`. You are also guaranteed that `Output Channels` is a multiple of 128.
+  - `W` - The convolution filter weights. `W` has shape `(Output Channels, Input Channels, Filter Height, Filter Width)`. You are guaranteed that `Filter Height == Filter Width`. You are also guaranteed that `Output Channels` is a multiple of 128. Moreover, you can assume that the size of the weights would always be such that it can completely fit inside SBUF.
   - `bias` - The convolution filter biases. `bias` has shape `(Output Channels)`
   - `pool_size` - The size of the max pooling filter and pooling stride. You are guaranteed that the size of the input, the size of the filter, and the `pool_size` would be such that everything is nicely divisible. More concretely, `(Input Height - Filter Height + 1) % Pool Size == 0`.  Notice that if the value of `pool_size` is `1`, then the fused kernel operates as a normal convolution kernel. This gives us the flexibility to choose whether we want max pooling or not.
 
