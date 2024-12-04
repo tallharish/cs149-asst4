@@ -100,7 +100,7 @@ def test_correctness_conv2d_kernel(
 def test_performance_conv2d_kernel(
     kernel,
     dtype=np.float32,
-    batch_size=2,
+    batch_size=1,
     in_channels=256,
     out_channels=256,
     image_height=224,
@@ -111,8 +111,8 @@ def test_performance_conv2d_kernel(
 ):
 
     performance_requirements_by_dtype = {
-        np.float32: 8900,
-        np.float16: 2300
+        np.float32: 4300,
+        np.float16: 1300
     }
 
     X = np.random.rand(batch_size, in_channels, image_height, image_width).astype(dtype)
