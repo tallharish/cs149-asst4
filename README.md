@@ -602,7 +602,6 @@ Below is the pseudocode for the described algorithm:
 - Have the input image with shape (Input Channels, Image Height * Image Width)
 - Have the filter weights with shape (Filter Height, Filter Weight, Input Channels, Output Channels)
 - Initialize the output to appropriate shape of (Output Channels, Output Height * Output Width)
-output = zeros([H * W, Output_Channels])
 
 # Iterate over the filter height
 for i in range(Filter_Height):
@@ -613,7 +612,7 @@ for i in range(Filter_Height):
         input_shifted = shift(input, (i, j))
 
         # Perform matrix multiplication between the input and the filter slice
-        output += matmul(weight[i,j,:,:], transpose(input_shifted)))
+        output += matmul(transpose(weight[i,j,:,:]), input_shifted)
 ```
 
 > Do note that this just an algorithmic description, and the purpose of this assignment is for you to figure out to map this algorithmic description to an efficient implementation on this hardware!
