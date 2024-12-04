@@ -1,6 +1,6 @@
 # Assignment 4: Programming a Machine Learning Accelerator #
 
-**Due Thurs Dec 5, 11:59pm**
+**Due Friday Dec 6, 11:59pm**
 
 **100 points total**
 
@@ -671,17 +671,17 @@ For the performance test, we evaluate the performance under different configurat
   - Part 1 Questions: 30 Points
   - Part 2 Questions: 10 Points
 
-**Correctness of Fused Convolution - MaxPool Kernel: 10 Points**
-  - With Small Images: 2.5 points
-  - With Large Images: 2.5 points
-  - With Bias Addition: 2.5 points
-  - With Max Pool: 2.5 points
+**Correctness of Fused Convolution - MaxPool Kernel: 45 Points + 2.5 Points EC**
+  - With Small Images: 15 points
+  - With Large Images: 15 points
+  - With Bias Addition: 15 points
+  - With Max Pool: 2.5 points EC
 
-**Performance of Fused Convolution - MaxPool Kernel on Large Images: 50 Points**
-  - Without Max Pool (Float 16): 17.5 points
-  - Without Max Pool (Float 32): 17.5 points
-  - With Max Pool (Float 16): 7.5 points
-  - With Max Pool (Float 32): 7.5 points
+**Performance of Fused Convolution - MaxPool Kernel on Large Images: 15 Points + 5 Points EC**
+  - Without Max Pool (Float 16): 7.5 points
+  - Without Max Pool (Float 32): 7.5 points
+  - With Max Pool (Float 16): 2.5 points
+  - With Max Pool (Float 32): 2.5 points
 
 ## Hand-in Instructions
 
