@@ -70,9 +70,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        # TODO: Perform the convolution of X[b] with the weights W and bias b, followed by a maxpool
-        # and store the result in X_out[b]
-        continue
+        raise RuntimeError("Please fill your implementation of computing convolution"
+                           " of X[b] with the weights W and bias b, followed by a"
+                           " maxpool and store the result in X_out[b]")
 
     return X_out
 
