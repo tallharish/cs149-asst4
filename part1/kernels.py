@@ -127,8 +127,8 @@ def vector_add_stream(a_vec, b_vec):
         b_tile = nl.ndarray((PARTITION_DIM, FREE_DIM), dtype=a_vec.dtype, buffer=nl.sbuf)
 
         # Load the input tiles
-        a_tile = nl.load(a_vec_re[m])
-        b_tile = nl.load(b_vec_re[m])
+        a_tile[...] = nl.load(a_vec_re[m])
+        b_tile[...] = nl.load(b_vec_re[m])
 
         # Add the tiles together
         res = nl.add(a_tile, b_tile)
