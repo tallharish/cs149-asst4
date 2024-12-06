@@ -116,8 +116,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         for wi in nl.affine_range(filter_width):
             for tile_c_out in nl.affine_range(n_tiles_c_out):
                 for tile_c_in in nl.affine_range(n_tiles_c_in):
-                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, wi])
-                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, wi, tile_c_out, tile_c_in, :, :])
+                    cur = nisa.iota(w[h, w, tile_c_out, tile_c_in, :, :])
+                    cur = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, w])
+                    w[h, w, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, w, tile_c_out, tile_c_in, :, :])
 
 
     # w = nisa.nc_transpose(W_sbuf_3)
@@ -136,9 +137,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         )  
 
         # load in cur_image one tile at a time
-        cur_image = X[b].reshape([n_tiles_c_in, nl.par_dim(c_in_pmax), filter_height, filter_width])
+        cur_image = X[b]# .reshape([n_tiles_c_in, nl.par_dim(c_in_pmax), filter_height, filter_width])
         for tile in nl.affine_range(n_tiles_c_in):
-            x[tile] = nl.load(cur_image[tile])
+            x[tile] = nl.load(cur_image[tile * c_in_pmax: (tile + 1) * c_in_pmax, :, :])
         
         
         for n_tile_out in nl.affine_range(n_tiles_c_out):
