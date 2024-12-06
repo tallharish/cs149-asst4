@@ -126,23 +126,22 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 dtype=X.dtype,
                 buffer=nl.sbuf
             )
-            
+            row_out = nl.zeros(
+                shape=(c_out_pmax, out_width),
+                dtype=X.dtype,
+                buffer=nl.psum
+            )
             for row in nl.affine_range(out_height):
-                row_out = nl.ndarray(
-                    shape=(c_out_pmax, out_width),
-                    dtype=X.dtype,
-                    buffer=nl.psum
-                )
                 for h in nl.affine_range(filter_height):
                     for wi in nl.affine_range(filter_width):
                         for n_tile_in in nl.affine_range(n_tiles_c_in):
-                            nl.matmul(
+                            row_out += nl.matmul(
                                 w[h, wi, n_tile_out, n_tile_in, :, :],
-                                x[n_tiles_c_in, :, row + h, wi:wi + out_width],
+                                x[n_tile_in, :, row + h, wi:wi + out_width],
                                 transpose_x=True
                             )
                 # copy each row's output back to tile in sbuf
-                per_tile_out[row] = nl.copy(row_out, dtype=X_out.dtype)
+                per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
             # copy each tile back to hbm
             X_out[b, n_tile_out * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
