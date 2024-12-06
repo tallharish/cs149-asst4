@@ -113,11 +113,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         buffer=nl.sbuf
     )
     for h in nl.affine_range(filter_height):
-        for w in nl.affine_range(filter_width):
+        for wi in nl.affine_range(filter_width):
             for tile_c_out in nl.affine_range(n_tiles_c_out):
                 for tile_c_in in nl.affine_range(n_tiles_c_in):
-                    w[h, w, tile_c_out, tile_c_in, :, :] = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, w])
-                    w[h, w, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, w, tile_c_out, tile_c_in, :, :])
+                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, wi])
+                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, wi, tile_c_out, tile_c_in, :, :])
 
 
     # w = nisa.nc_transpose(W_sbuf_3)
