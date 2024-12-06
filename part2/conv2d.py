@@ -58,7 +58,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     assert nl.tile_size.gemm_moving_fmax >= out_width
 
     # Initialize output array
-    X_out = nl.ndarray(
+    X_out = nl.zeros(
         shape=(batch_size, out_channels, out_pool_height, out_pool_width),
         dtype=X.dtype,
         buffer=nl.hbm,
@@ -96,7 +96,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     w[h, wi, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, wi, tile_c_out, tile_c_in, :, :])
 
 
-          
+              
+
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
@@ -130,7 +131,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             
             for row in nl.affine_range(out_height):
                 row_out = nl.zeros(
-                    shape=(c_out_pmax, out_width),
+                    shape=(nl.par_dim(c_out_pmax), out_width),
                     dtype=X.dtype,
                     buffer=nl.psum
                 )
@@ -146,7 +147,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 # copy each row's output back to tile in sbuf
                 per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
             # copy each tile back to hbm
-            X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
+            nl.store(X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1)* c_out_pmax], per_tile_out)
+            # X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
     return X_out
 
