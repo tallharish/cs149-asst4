@@ -81,30 +81,37 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     # series of operations to get weights array, w, with shape
     # [filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_in_pmax), c_out_pmax]
 
-    W_sbuf_2 = nl.ndarray(
-        shape=(filter_height, filter_width, n_tiles_c_out, nl.par_dim(c_out_pmax), n_tiles_c_in, c_in_pmax),
-        dtype=W.dtype,
-        buffer=nl.sbuf
-    )
-    for h in nl.affine_range(filter_height):
-        for w in nl.affine_range(filter_width):
-            W_sbuf_2[h, w] = nl.copy(W_sbuf[:, :, :, :, h, w])
+    # W_sbuf_2 = nl.ndarray(
+    #     shape=(filter_height, filter_width, n_tiles_c_out, nl.par_dim(c_out_pmax), n_tiles_c_in, c_in_pmax),
+    #     dtype=W.dtype,
+    #     buffer=nl.sbuf
+    # )
+    # for h in nl.affine_range(filter_height):
+    #     for w in nl.affine_range(filter_width):
+    #         W_sbuf_2[h, w, :, :, :, :] = nl.copy(W_sbuf[:, :, :, :, h, w])
 
-    W_sbuf_3 = nl.ndarray(
-        shape=(filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_out_pmax), c_in_pmax),
-        dtype=W.dtype,
-        buffer=nl.sbuf
-    )
-    for x in nl.affine_range(c_out_pmax):
-        for n_tile in nl.affine_range(n_tiles_c_in):
-            W_sbuf_3[:, :, :, n_tile, x, :] = W_sbuf_2[:, :, :, x, n_tile, :]
+    # W_sbuf_3 = nl.ndarray(
+    #     shape=(filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_out_pmax), c_in_pmax),
+    #     dtype=W.dtype,
+    #     buffer=nl.sbuf
+    # )
+    # for x in nl.affine_range(c_out_pmax):
+    #     for n_tile in nl.affine_range(n_tiles_c_in):
+    #         W_sbuf_3[:, :, :, n_tile, x, :] = W_sbuf_2[:, :, :, x, n_tile, :]
 
     w = nl.ndarray(
         shape=(filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_in_pmax), c_out_pmax),
         dtype=W.dtype,
         buffer=nl.sbuf
     )
-    w = nisa.nc_transpose(W_sbuf_3)
+    for h in nl.affine_range(filter_height):
+        for w in nl.affine_range(filter_width):
+            for tile_c_out in nl.affine_range(n_tiles_c_out):
+                for tile_c_in in nl.affine_range(n_tiles_c_in):
+                    w[h, w, tile_c_out, tile_c_in, :, :] = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, w])
+                    w[h, w, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, w, tile_c_out, tile_c_in, :, :])
+
+    # w = nisa.nc_transpose(W_sbuf_3)
           
 
     # Process the images in batches
