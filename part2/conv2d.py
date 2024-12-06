@@ -126,12 +126,14 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 dtype=X.dtype,
                 buffer=nl.sbuf
             )
-            row_out = nl.zeros(
-                shape=(c_out_pmax, out_width),
-                dtype=X.dtype,
-                buffer=nl.psum
-            )
+            
+            
             for row in nl.affine_range(out_height):
+                row_out = nl.zeros(
+                    shape=(c_out_pmax, out_width),
+                    dtype=X.dtype,
+                    buffer=nl.psum
+                )
                 for h in nl.affine_range(filter_height):
                     for wi in nl.affine_range(filter_width):
                         for n_tile_in in nl.affine_range(n_tiles_c_in):
@@ -140,10 +142,29 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 x[n_tile_in, :, row + h, wi:wi + out_width],
                                 transpose_x=True
                             )
+                            # row_out = nl.add(row_out, row_out_cur)
                 # copy each row's output back to tile in sbuf
                 per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
             # copy each tile back to hbm
-            X_out[b, n_tile_out * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
+            X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
     return X_out
+
+input_channels = 128
+output_channels = 128
+kernel_size = 3
+batch_size = 4
+image_dims = (32, 16)
+
+X = np.random.rand(
+    batch_size, input_channels, image_dims[0], image_dims[1]
+).astype(np.float32)
+W = np.random.rand(
+    output_channels, input_channels, kernel_size, kernel_size
+).astype(np.float32)
+bias = (
+    np.zeros(output_channels).astype(np.float32)
+)
+
+fused_conv2d_maxpool(X, W, bias)
 
