@@ -112,13 +112,16 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         for chunk in nl.affine_range(n_out_chunks):
             # correct for divisibility issues for the last chunk
             if chunk == n_out_chunks - 1:
-                out_chunk_size = out_height % n_out_chunks
-                in_chunk_size = out_chunk_size + filter_height - 1
+                cur_out_chunk_size = out_height % n_out_chunks
+                cur_in_chunk_size = out_chunk_size + filter_height - 1
+            else:
+                cur_out_chunk_size = out_chunk_size
+                cur_in_chunk_size = in_chunk_size
             # for output rows [chunk * out_chunk_size, (chunk + 1) * out_chunk_size)
             # so, need input rows [chunk * out_chunk_size, chunk * out_chunk_size + in_chunk_size]
             x = nl.ndarray(
                     #shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_height, input_width),
-                    shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), in_chunk_size, input_width),
+                    shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), cur_in_chunk_size, input_width),
                     dtype=X.dtype,
                     buffer=nl.sbuf
             )  
@@ -131,20 +134,20 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 t_end = (tile + 1) * c_in_pmax
  
                 #x[tile] = nl.load(X[b, t_start: t_end])
-                x[tile] = nl.load(X[b, t_start: t_end, chunk * out_chunk_size: chunk * out_chunk_size + in_chunk_size])
+                x[tile] = nl.load(X[b, t_start: t_end, chunk * out_chunk_size: min(input_height, chunk * out_chunk_size + in_chunk_size)])
             
             
             for n_tile_out in nl.affine_range(n_tiles_c_out):
                 per_tile_out = nl.ndarray(
                     #shape=(nl.par_dim(c_out_pmax), out_height, out_width),
-                    shape=(nl.par_dim(c_out_pmax), out_chunk_size, out_width),
+                    shape=(nl.par_dim(c_out_pmax), cur_out_chunk_size, out_width),
                     dtype=X.dtype,
                     buffer=nl.sbuf
                 )
                 
                 
                 # for row in nl.affine_range(out_height):
-                for row in nl.affine_range(out_chunk_size):
+                for row in nl.affine_range(cur_out_chunk_size):
                     row_out = nl.zeros(
                         shape=(nl.par_dim(c_out_pmax), out_width),
                         dtype=X.dtype,
@@ -163,7 +166,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
                 # copy each tile back to hbm
                 nl.store(X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1)* c_out_pmax, 
-                               chunk * out_chunk_size: (chunk + 1) * out_chunk_size], 
+                               chunk * out_chunk_size: min(out_height, (chunk + 1) * out_chunk_size)], 
                         per_tile_out)
                 # X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
