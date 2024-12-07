@@ -34,6 +34,7 @@ The shape of the output should be [batch_size, out_channels, out_pool_height, ou
 
 """
 
+
 @nki.jit
 def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
@@ -50,7 +51,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
     out_pool_height = out_height // pool_size
     out_pool_width = out_width // pool_size
-    
+
     # Can assume multiple of 128 to avoid using mask
     assert in_channels % 128 == 0
 
@@ -65,43 +66,64 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     )
 
     # Various tiling dimensions (You may want to define more of them)
-    c_in_pmax = nl.tile_size.pmax # 128
-    c_out_pmax = nl.tile_size.pmax # 128
+    c_in_pmax = nl.tile_size.pmax  # 128
+    c_out_pmax = nl.tile_size.pmax  # 128
     n_tiles_c_in = in_channels // c_in_pmax
     n_tiles_c_out = out_channels // c_out_pmax
 
     out_chunk_size = 2
     in_chunk_size = out_chunk_size + filter_height - 1
-    n_out_chunks = out_height // 2 # assume out_height even
+    n_out_chunks = out_height // 2  # assume out_height even
 
     # allocate and load in weights tensor to sbuf
     W_sbuf = nl.ndarray(
-        shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), n_tiles_c_in, c_in_pmax, filter_height, filter_width),
+        shape=(
+            n_tiles_c_out,
+            nl.par_dim(c_out_pmax),
+            n_tiles_c_in,
+            c_in_pmax,
+            filter_height,
+            filter_width,
+        ),
         dtype=W.dtype,
-        buffer=nl.sbuf
+        buffer=nl.sbuf,
     )
 
-
-    W = W.reshape([n_tiles_c_out, c_out_pmax, n_tiles_c_in, c_in_pmax, filter_height, filter_width])
+    W = W.reshape(
+        [
+            n_tiles_c_out,
+            c_out_pmax,
+            n_tiles_c_in,
+            c_in_pmax,
+            filter_height,
+            filter_width,
+        ]
+    )
     for tile_c_out in nl.affine_range(n_tiles_c_out):
         W_sbuf[tile_c_out] = nl.load(W[tile_c_out])
 
-
     w = nl.ndarray(
-        shape=(filter_height, filter_width, n_tiles_c_out, n_tiles_c_in, nl.par_dim(c_in_pmax), c_out_pmax),
+        shape=(
+            filter_height,
+            filter_width,
+            n_tiles_c_out,
+            n_tiles_c_in,
+            nl.par_dim(c_in_pmax),
+            c_out_pmax,
+        ),
         dtype=W.dtype,
-        buffer=nl.sbuf
+        buffer=nl.sbuf,
     )
     for h in nl.affine_range(filter_height):
         for wi in nl.affine_range(filter_width):
             for tile_c_out in nl.affine_range(n_tiles_c_out):
                 for tile_c_in in nl.affine_range(n_tiles_c_in):
-                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.copy(W_sbuf[tile_c_out, :, tile_c_in, :, h, wi])
-                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.transpose(w[h, wi, tile_c_out, tile_c_in, :, :])
-
-
-              
-
+                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.copy(
+                        W_sbuf[tile_c_out, :, tile_c_in, :, h, wi]
+                    )
+                    w[h, wi, tile_c_out, tile_c_in, :, :] = nl.transpose(
+                        w[h, wi, tile_c_out, tile_c_in, :, :]
+                    )
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
@@ -120,57 +142,78 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             # for output rows [chunk * out_chunk_size, (chunk + 1) * out_chunk_size)
             # so, need input rows [chunk * out_chunk_size, chunk * out_chunk_size + in_chunk_size]
             x = nl.ndarray(
-                    #shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_height, input_width),
-                    shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), cur_in_chunk_size, input_width),
-                    dtype=X.dtype,
-                    buffer=nl.sbuf
-            )  
+                # shape=(n_tiles_c_in, nl.par_dim(c_in_pmax), input_height, input_width),
+                shape=(
+                    n_tiles_c_in,
+                    nl.par_dim(c_in_pmax),
+                    cur_in_chunk_size,
+                    input_width,
+                ),
+                dtype=X.dtype,
+                buffer=nl.sbuf,
+            )
 
             # load the chunk of the image one tile at a time
-            
+
             for tile in nl.affine_range(n_tiles_c_in):
-                
+
                 t_start = tile * c_in_pmax
                 t_end = (tile + 1) * c_in_pmax
- 
-                #x[tile] = nl.load(X[b, t_start: t_end])
-                x[tile] = nl.load(X[b, t_start: t_end, chunk * out_chunk_size: min(input_height, chunk * out_chunk_size + in_chunk_size)])
-            
-            
+
+                # x[tile] = nl.load(X[b, t_start: t_end])
+                x[tile] = nl.load(
+                    X[
+                        b,
+                        t_start:t_end,
+                        chunk
+                        * out_chunk_size : min(
+                            input_height, chunk * out_chunk_size + in_chunk_size
+                        ),
+                    ]
+                )
+
             for n_tile_out in nl.affine_range(n_tiles_c_out):
                 per_tile_out = nl.ndarray(
-                    #shape=(nl.par_dim(c_out_pmax), out_height, out_width),
+                    # shape=(nl.par_dim(c_out_pmax), out_height, out_width),
                     shape=(nl.par_dim(c_out_pmax), cur_out_chunk_size, out_width),
                     dtype=X.dtype,
-                    buffer=nl.sbuf
+                    buffer=nl.sbuf,
                 )
-                
-                
+
                 # for row in nl.affine_range(out_height):
                 for row in nl.affine_range(cur_out_chunk_size):
                     row_out = nl.zeros(
                         shape=(nl.par_dim(c_out_pmax), out_width),
                         dtype=X.dtype,
-                        buffer=nl.psum
+                        buffer=nl.psum,
                     )
                     for h in nl.affine_range(filter_height):
                         for wi in nl.affine_range(filter_width):
                             for n_tile_in in nl.affine_range(n_tiles_c_in):
                                 row_out += nl.matmul(
                                     w[h, wi, n_tile_out, n_tile_in, :, :],
-                                    x[n_tile_in, :, row + h, wi:wi + out_width],
-                                    transpose_x=True
+                                    x[n_tile_in, :, row + h, wi : wi + out_width],
+                                    transpose_x=True,
                                 )
                                 # row_out = nl.add(row_out, row_out_cur)
                     # copy each row's output back to tile in sbuf
                     per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
                 # copy each tile back to hbm
-                nl.store(X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1)* c_out_pmax, 
-                               chunk * out_chunk_size: min(out_height, (chunk + 1) * out_chunk_size)], 
-                        per_tile_out)
+                nl.store(
+                    X_out[
+                        b,
+                        n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax,
+                        chunk
+                        * out_chunk_size : min(
+                            out_height, (chunk + 1) * out_chunk_size
+                        ),
+                    ],
+                    per_tile_out,
+                )
                 # X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
     return X_out
+
 
 input_channels = 128
 output_channels = 128
@@ -178,15 +221,12 @@ kernel_size = 3
 batch_size = 4
 image_dims = (32, 16)
 
-X = np.random.rand(
-    batch_size, input_channels, image_dims[0], image_dims[1]
-).astype(np.float32)
-W = np.random.rand(
-    output_channels, input_channels, kernel_size, kernel_size
-).astype(np.float32)
-bias = (
-    np.zeros(output_channels).astype(np.float32)
+X = np.random.rand(batch_size, input_channels, image_dims[0], image_dims[1]).astype(
+    np.float32
 )
+W = np.random.rand(output_channels, input_channels, kernel_size, kernel_size).astype(
+    np.float32
+)
+bias = np.zeros(output_channels).astype(np.float32)
 
 fused_conv2d_maxpool(X, W, bias)
-
