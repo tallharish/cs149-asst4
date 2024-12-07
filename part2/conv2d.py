@@ -41,6 +41,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     batch_size, in_channels, input_height, input_width = X.shape
     out_channels, in_channels_, filter_height, filter_width = W.shape
     out_channels_ = bias.shape[0]
+    bias = bias.reshape([bias.shape[0] // nl.tile_size.pmax, nl.tile_size.pmax, 1])
+    print(f"bias.shape {bias.shape}")
+    print(f"X.dtype {X.dtype}")
+    print(f"W.dtype {W.dtype}")
+    print(f"bias.dtype {bias.dtype}")
 
     assert (
         in_channels_ == in_channels and out_channels_ == out_channels
@@ -179,14 +184,25 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     dtype=X.dtype,
                     buffer=nl.sbuf,
                 )
+                print(f"per_tile_out.shape: {per_tile_out.shape}")
+
+                bias_tile = nl.ndarray(
+                    shape=(n_tiles_c_out, nl.par_dim(c_out_pmax), 1),
+                    dtype=bias.dtype,
+                    buffer=nl.sbuf,
+                )
+
+                bias_tile[n_tile_out] = nl.load(bias[n_tile_out])
+                print(f"bias_tile.shape: {bias_tile.shape}")
 
                 # for row in nl.affine_range(out_height):
                 for row in nl.affine_range(cur_out_chunk_size):
                     row_out = nl.zeros(
                         shape=(nl.par_dim(c_out_pmax), out_width),
-                        dtype=X.dtype,
+                        dtype=nl.float32,
                         buffer=nl.psum,
                     )
+
                     for h in nl.affine_range(filter_height):
                         for wi in nl.affine_range(filter_width):
                             for n_tile_in in nl.affine_range(n_tiles_c_in):
@@ -197,7 +213,14 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 )
                                 # row_out = nl.add(row_out, row_out_cur)
                     # copy each row's output back to tile in sbuf
-                    per_tile_out[:, row] = nl.copy(row_out, dtype=X_out.dtype)
+                    print(f"row_out.shape: {row_out.shape}")
+
+                    # per_tile_out[:, row] = nl.copy(row_out_tmp, dtype=X_out.dtype) # Old Style
+                    per_tile_out[:, row] = nisa.tensor_scalar(
+                        row_out,
+                        op0=nl.add,
+                        operand0=bias_tile[n_tile_out],
+                    )
                 # copy each tile back to hbm
                 nl.store(
                     X_out[
@@ -227,6 +250,6 @@ X = np.random.rand(batch_size, input_channels, image_dims[0], image_dims[1]).ast
 W = np.random.rand(output_channels, input_channels, kernel_size, kernel_size).astype(
     np.float32
 )
-bias = np.zeros(output_channels).astype(np.float32)
+bias = np.random.rand(output_channels).astype(np.float32)
 
 fused_conv2d_maxpool(X, W, bias)
