@@ -130,6 +130,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                         w[h, wi, tile_c_out, tile_c_in, :, :]
                     )
 
+    # Pool index patterns
+    i_0 = nl.arange(c_out_pmax)[:, None, None, None, None]
+    i_1 = nl.arange(out_chunk_size)[None, :, None, None, None]  # y_outer
+    i_2 = nl.arange(pool_size)[None, None, :, None, None]  # y_inner
+    i_3 = nl.arange(out_pool_width)[None, None, None, :, None]  # x_outer
+    i_4 = nl.arange(pool_size)[None, None, None, None, :]  # x_inner
+
     # Process the images in batches
     for b in nl.affine_range(batch_size):
         # TODO: Perform the convolution of X[b] with the weights W and bias b, followed by a maxpool
@@ -221,6 +228,19 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                         op0=nl.add,
                         operand0=bias_tile[n_tile_out],
                     )
+
+                print(f"per_tile_out.shape: {per_tile_out.shape}")
+                print(
+                    f"X_out.shape: {X_out[b,n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax, chunk * out_chunk_size : min(out_height, (chunk + 1) * out_chunk_size),].shape}"
+                )
+
+                out_tile = nl.max(
+                    per_tile_out[i_0, pool_size * i_1 + i_2, pool_size * i_3 + i_4],
+                    axis=[2, 4],
+                )
+                print(f"out_tile.shape: {out_tile.shape}")
+
+                # MaxPool on per_tile_out to generate per_tile_out_maxPool
                 # copy each tile back to hbm
                 nl.store(
                     X_out[
