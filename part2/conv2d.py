@@ -110,6 +110,10 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
         # allocate space for one chunk of an image in sbuf
         for chunk in nl.affine_range(n_out_chunks):
+            # correct for divisibility issues for the last chunk
+            if chunk == n_out_chunks - 1:
+                out_chunk_size = out_height % n_out_chunks
+                in_chunk_size = out_chunk_size + filter_height - 1
             # for output rows [chunk * out_chunk_size, (chunk + 1) * out_chunk_size)
             # so, need input rows [chunk * out_chunk_size, chunk * out_chunk_size + in_chunk_size]
             x = nl.ndarray(
