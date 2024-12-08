@@ -132,7 +132,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
     # Pool index patterns
     i_0 = nl.arange(c_out_pmax)[:, None, None, None, None]
-    i_1 = nl.arange(out_chunk_size)[None, :, None, None, None]  # y_outer
+    i_1 = nl.arange(out_chunk_size // pool_size)[None, :, None, None, None]  # y_outer
     i_2 = nl.arange(pool_size)[None, None, :, None, None]  # y_inner
     i_3 = nl.arange(out_pool_width)[None, None, None, :, None]  # x_outer
     i_4 = nl.arange(pool_size)[None, None, None, None, :]  # x_inner
@@ -234,8 +234,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     f"X_out.shape: {X_out[b,n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax, chunk * out_chunk_size : min(out_height, (chunk + 1) * out_chunk_size),].shape}"
                 )
 
+                # per_tile_out -> shape (128, 2, 222)
                 out_tile = nl.max(
-                    per_tile_out[i_0, pool_size * i_1 + i_2, pool_size * i_3 + i_4],
+                    per_tile_out[i_0, pool_size * i_1 + i_2, pool_size * i_3 + i_4], # shape -> (128, 2, 2, 111, 2)
                     axis=[2, 4],
                 )
                 print(f"out_tile.shape: {out_tile.shape}")
@@ -247,11 +248,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                         b,
                         n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax,
                         chunk
-                        * out_chunk_size : min(
-                            out_height, (chunk + 1) * out_chunk_size
+                        * (out_chunk_size // pool_size): min(
+                            out_pool_height, (chunk + 1) * (out_chunk_size // pool_size)
                         ),
                     ],
-                    per_tile_out,
+                    out_tile,
                 )
                 # X_out[b, n_tile_out * c_out_pmax: (n_tile_out + 1) * c_out_pmax] = nl.copy(per_tile_out, dtype=X_out.dtype)
 
