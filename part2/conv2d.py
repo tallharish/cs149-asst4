@@ -231,12 +231,14 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
                 print(f"per_tile_out.shape: {per_tile_out.shape}")
                 print(
-                    f"X_out.shape: {X_out[b,n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax, chunk * out_chunk_size : min(out_height, (chunk + 1) * out_chunk_size),].shape}"
+                    f"X_out.shape: {X_out[b,n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax,chunk * (out_chunk_size // pool_size) : min(out_pool_height, (chunk + 1) * (out_chunk_size // pool_size)),].shape}"
                 )
 
                 # per_tile_out -> shape (128, 2, 222)
                 out_tile = nl.max(
-                    per_tile_out[i_0, pool_size * i_1 + i_2, pool_size * i_3 + i_4], # shape -> (128, 2, 2, 111, 2)
+                    per_tile_out[
+                        i_0, pool_size * i_1 + i_2, pool_size * i_3 + i_4
+                    ],  # shape -> (128, 2, 2, 111, 2)
                     axis=[2, 4],
                 )
                 print(f"out_tile.shape: {out_tile.shape}")
@@ -248,7 +250,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                         b,
                         n_tile_out * c_out_pmax : (n_tile_out + 1) * c_out_pmax,
                         chunk
-                        * (out_chunk_size // pool_size): min(
+                        * (out_chunk_size // pool_size) : min(
                             out_pool_height, (chunk + 1) * (out_chunk_size // pool_size)
                         ),
                     ],
